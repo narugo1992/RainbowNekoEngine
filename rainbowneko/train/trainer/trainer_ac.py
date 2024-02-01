@@ -83,13 +83,13 @@ class Trainer:
 
         torch.backends.cuda.matmul.allow_tf32 = cfgs.allow_tf32
 
-        if self.cfgs.train.metrics is not None:
+        if self.is_local_main_process and self.cfgs.train.metrics is not None:
             self.evaluator_train, _ = self.build_evaluator(self.cfgs.train.metrics)
             self.evaluator_train.to(self.accelerator.device)
         else:
             self.evaluator_train = None
 
-        if self.cfgs.evaluator is not None:
+        if self.is_local_main_process and self.cfgs.evaluator is not None:
             self.evaluator, self.eval_interval = self.build_evaluator(self.cfgs.evaluator)
             self.evaluator.to(self.accelerator.device)
         else:
@@ -195,7 +195,7 @@ class Trainer:
             )
 
     def build_evaluator(self, cfgs_eval):
-        if self.is_local_main_process and cfgs_eval is not None:
+        if cfgs_eval is not None:
             eval_interval = cfgs_eval.keywords.pop('interval', None)
             try:
                 evaluator = cfgs_eval(
@@ -426,8 +426,30 @@ class Trainer:
         self.model_wrapper.eval()
         pred_list = {}
         target_list = {}
-        partial_metrics = {}
 
+        def update(pred_list, target_list):
+            # 在每个GPU上收集预测和目标
+            #gathered_predictions_cat = self.accelerator.gather(pred_list)
+            #gathered_targets_cat = self.accelerator.gather(target_list)
+            # one gpu eval
+            gathered_predictions_cat = pred_list
+            gathered_targets_cat = target_list
+
+            try:
+                gathered_predictions = {k: sum(v, []) for k, v in gathered_predictions_cat.items()}
+                gathered_targets = {k: sum(v, []) for k, v in gathered_targets_cat.items()}
+            except:
+                gathered_predictions = gathered_predictions_cat
+                gathered_targets = gathered_targets_cat
+
+            if self.is_local_main_process:
+                # 主进程处理gathered数据，并计算部分指标
+                self.evaluator.update(gathered_predictions, gathered_targets)
+
+            pred_list.clear()
+            target_list.clear()
+
+        self.evaluator.reset()
         for idx, data_list in enumerate(tqdm(self.val_loader_group, disable=not self.is_local_main_process)):
             pred, target = self.eval_one_step(data_list)
             pred_list = addto_dictlist(pred_list, pred)
@@ -435,43 +457,13 @@ class Trainer:
 
             # 定期汇总和计算指标
             if (idx + 1) % gather_interval == 0:
-                # 在每个GPU上收集预测和目标
-                gathered_predictions_cat = self.accelerator.gather(pred_list)
-                gathered_targets_cat = self.accelerator.gather(target_list)
+                update(pred_list, target_list)
+        update(pred_list, target_list)
 
-                # gathered_predictions_cat = gathered_predictions[0]
-                # for item in gathered_predictions[1:]:
-                #     addto_dictlist(gathered_predictions_cat, item)
-                # gathered_targets_cat = gathered_targets[0]
-                # for item in gathered_targets[1:]:
-                #     addto_dictlist(gathered_targets_cat, item)
+        metric = self.evaluator.evaluate()
+        if not isinstance(metric, dict):
+            metric = {'metric': metric}
 
-                gathered_predictions = {k: torch.cat(v) for k, v in gathered_predictions_cat.items()}
-                gathered_targets = {k: torch.cat(v) for k, v in gathered_targets_cat.items()}
-
-                if self.is_local_main_process:
-                    # 主进程处理gathered数据，并计算部分指标
-                    partial_metric = self.evaluator(gathered_predictions, gathered_targets)
-                    if isinstance(partial_metric, dict):
-                        for k, v in partial_metric.items():
-                            if k not in partial_metrics:
-                                partial_metrics[k] = []
-                            partial_metrics[k].append(v)
-                    else:
-                        k = 'metric'
-                        if k not in partial_metrics:
-                            partial_metrics[k] = []
-                        partial_metrics[k].append(partial_metric)
-
-                pred_list.clear()
-                target_list.clear()
-
-        metric = {}
-        for k, v in partial_metrics.items():
-            try:
-                metric[k] = torch.cat(v).mean()
-            except:
-                metric[k] = torch.tensor(v).mean()
         log_data = {
             "Evaluate": {
                 "format": "step {}",

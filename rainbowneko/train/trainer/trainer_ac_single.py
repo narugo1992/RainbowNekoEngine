@@ -14,7 +14,8 @@ class TrainerSingleCard(Trainer):
         )
 
         self.local_rank = 0
-        self.world_size = self.accelerator.num_processes
+        print('num process', self.accelerator.num_processes)
+        self.world_size = 1
 
         set_seed(self.cfgs.seed + self.local_rank)
 

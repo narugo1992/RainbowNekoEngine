@@ -15,6 +15,7 @@ class PosNegBucket(BaseBucket):
 
     def build(self, bs: int, world_size: int, source: 'DataSource'):
         self.bs = bs  # bs per device
+        self.world_size = world_size
         self.source = source
 
         self.cls_group = {}  # {cls: idx}
@@ -36,12 +37,14 @@ class PosNegBucket(BaseBucket):
 
     def crop_resize(self, image, size, mask_interp=cv2.INTER_CUBIC):
         w, h = image['img'].size
-        return image, [h,w,0,0,h,w]
+        return image, [h, w, 0, 0, h, w]
 
     def __getitem__(self, idx) -> Tuple[Tuple[str, 'DataSource'], Tuple[int, int]]:
 
-        idx_bs = idx % self.bs
-        idx_0 = idx // self.bs
+        # world_size for DistributedSampler
+        ws_bs = self.world_size * self.bs
+        idx_bs = (idx // self.world_size) % self.bs
+        idx_0 = idx // ws_bs * ws_bs + idx % self.world_size
 
         if idx_bs == 0:
             return self.source[idx], self.target_size
