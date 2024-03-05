@@ -253,6 +253,7 @@ class Trainer:
         return dataset, batch_size, arb
 
     def build_data(self, data_builder: partial, train=True) -> torch.utils.data.DataLoader:
+        drop_last = data_builder.keywords.pop("drop_last", True)
         dataset, batch_size, arb = self.build_dataset(data_builder)
 
         # Pytorch Data loader
@@ -268,6 +269,7 @@ class Trainer:
             num_workers=self.cfgs.train.workers,
             sampler=sampler,
             collate_fn=dataset.collate_fn,
+            drop_last=drop_last,
         )
         return loader
 
@@ -379,10 +381,10 @@ class Trainer:
                     }
 
                 model_pred = self.forward(image, **other_datas)
-                pred_list = addto_dictlist(pred_list, model_pred, v_proc=lambda v: v.detach())
-                target_list = addto_dictlist(target_list, target, v_proc=lambda v: v.detach())
+                pred_list = addto_dictlist(pred_list, model_pred, v_proc=lambda v: v.detach() if isinstance(v, torch.Tensor) else v)
+                target_list = addto_dictlist(target_list, target, v_proc=lambda v: v.detach() if isinstance(v, torch.Tensor) else v)
                 loss = self.get_loss(model_pred, target) * self.train_loader_group.get_loss_weights(idx)
-                self.accelerator.backward(loss)
+                self.accelerator.backward(loss, retain_graph=self.cfgs.train.retain_graph)
 
             if hasattr(self, "optimizer"):
                 if self.cfgs.train.max_grad_norm and self.accelerator.sync_gradients:  # fine-tuning
@@ -458,7 +460,8 @@ class Trainer:
             # 定期汇总和计算指标
             if (idx + 1) % gather_interval == 0:
                 update(pred_list, target_list)
-        update(pred_list, target_list)
+        if len(pred_list)>0:
+            update(pred_list, target_list)
 
         metric = self.evaluator.evaluate()
         if not isinstance(metric, dict):
@@ -493,8 +496,8 @@ class Trainer:
             pred_list = addto_dictlist(pred_list, model_pred)
             target_list = addto_dictlist(target_list, target)
 
-        pred_list_cat = {k: torch.cat(v) for k, v in pred_list.items()}
-        target_list_cat = {k: torch.cat(v) for k, v in target_list.items()}
+        pred_list_cat = {k: (torch.cat(v) if isinstance(v, torch.Tensor) else v) for k, v in pred_list.items()}
+        target_list_cat = {k: (torch.cat(v) if isinstance(v, torch.Tensor) else v) for k, v in target_list.items()}
         return pred_list_cat, target_list_cat
 
 
