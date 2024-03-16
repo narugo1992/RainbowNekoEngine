@@ -2,6 +2,8 @@ from typing import Dict, Any, List, Union
 import torch
 
 from PIL import Image
+from tqdm import tqdm
+
 from .base import BasicAction, feedback_input, MemoryMixin
 from rainbowneko.ckpt_manager import auto_manager
 
@@ -21,7 +23,7 @@ class LoadImageAction(BasicAction):
 
     @feedback_input
     def forward(self, device, **states):
-        input = torch.stack([self.load_one(path) for path in self.image_paths]).to(device)
+        input = torch.stack([self.load_one(path) for path in tqdm(self.image_paths)]).to(device)
         input: Dict[str, Any] = {'x':input}
         return {'input':input}
 
