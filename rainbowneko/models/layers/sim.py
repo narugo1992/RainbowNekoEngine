@@ -18,8 +18,8 @@ class BatchCosineSimilarity(nn.Module):
         # cosine similarity as logits
         logit_scale = self.logit_scale.exp()
         logits_per_image = logit_scale * torch.mm(image_features, image_features.transpose(0, 1))
-        # if self.training:
-        logits_per_image = logits_per_image - torch.diag_embed(torch.diag(logits_per_image))
+        if self.training:
+            logits_per_image = logits_per_image - torch.diag_embed(torch.diag(logits_per_image))
 
         return logits_per_image
 

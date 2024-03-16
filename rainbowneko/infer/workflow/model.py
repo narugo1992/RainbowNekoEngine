@@ -31,15 +31,17 @@ class ForwardAction(BasicAction, MemoryMixin):
     @feedback_input
     def forward(self, input: Dict[str, Any], memory, **states):
         with torch.inference_mode():
+            memory.model.eval()
             output: Dict[str, Any] = memory.model(**input)
         return {'output': output}
 
 
-class VisPredAction(BasicAction):
+class VisPredAction(BasicAction, MemoryMixin):
     @feedback_input
-    def forward(self, output: Dict[str, Any], **states):
+    def forward(self, output: Dict[str, Any], memory, **states):
         pred = output['pred']
         if isinstance(pred, torch.Tensor):
-            print(pred.cpu())
-        else:
-            print(pred)
+            pred = pred.cpu().numpy()
+
+        memory.logits = pred
+        return {'logits': pred}
