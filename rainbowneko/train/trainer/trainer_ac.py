@@ -312,6 +312,7 @@ class Trainer:
         if self.cfgs.train.resume is not None:
             self.global_step = self.cfgs.train.resume.start_step
 
+        self.model_wrapper.train()
         loss_sum = None
         for data_list in self.train_loader_group:
             loss, pred_list, target_list = self.train_one_step(data_list)
@@ -344,7 +345,9 @@ class Trainer:
                     if self.evaluator_train is not None:
                         pred_list_cat = {k: torch.cat(v) for k, v in pred_list.items()}
                         target_list_cat = {k: torch.cat(v) for k, v in target_list.items()}
-                        metrics_dict = self.evaluator_train(pred_list_cat, target_list_cat)
+                        self.evaluator_train.reset()
+                        self.evaluator_train.update(pred_list_cat, target_list_cat)
+                        metrics_dict = self.evaluator_train.evaluate()
                         log_data.update(EvaluatorGroup.format(metrics_dict))
                     self.loggers.log(
                         datas=log_data,
